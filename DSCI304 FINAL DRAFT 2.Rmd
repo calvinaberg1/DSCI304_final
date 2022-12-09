@@ -1,0 +1,403 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## Notebook for DSCI 304 Final Visualizations
+
+```{r}
+data <- read.csv("C:/Users/calvi/Downloads/NBA Shot Locations 1997 - 2020.csv")
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(zoo)
+library(readxl)
+library(lubridate)
+library(ggplot2)
+library(scales)
+library(sp)
+library(rgdal)
+library(cowplot)
+library(ggpubr)
+library(maps)
+library(sf)
+library(imager)
+library(ggimage)
+library(magick)
+library(tidyverse)
+library(gganimate)
+library(png)
+library(gapminder)
+library(gifski)
+library(reshape2)
+library(Rcpp)
+library(plotly)
+```
+
+```{r}
+head(data)
+max(table(data$Player.Name))
+unique(data$Shot.Type)
+```
+## Averages by shot distance
+
+```{r}
+shot_dist_avg <- data %>% 
+  group_by(Shot.Distance) %>%
+  summarize(fgpct = mean(Shot.Made.Flag))
+
+shot_dist_avg$value <- ifelse(shot_dist_avg$Shot.Distance >= 23, 3, 2)
+shot_dist_avg$shot_value <- shot_dist_avg$fgpct * shot_dist_avg$value
+
+shot_dist_avg %>%
+  filter(Shot.Distance <= 47) %>%
+  ggplot(aes(x = Shot.Distance, y = fgpct, fill = shot_value)) +
+  geom_bar(stat = "Identity") +
+  theme_classic() +
+  scale_fill_gradient(low = "#1D5085", high = "#D04238") +
+  ggtitle("Shot Percentages by Shot Distance") +
+  labs(subtitle = "High value in close range and 3 pt shots",
+       x = "Shot Distance", y = "Field Goal Percent", fill = "Average Shot Value") +
+  theme(plot.title = element_text(face = "bold")) +
+  theme(text=element_text(family="serif"))+
+  theme(plot.title = element_text(size = 16))
+```
+## Average Shot Distance By Year
+```{r}
+data$year <- as.numeric(substr(data$Game.Date,1,4))
+data$threepoint <-data$Shot.Type == "3PT Field Goal"
+data
+year_grouped <- data %>%
+  group_by(year) %>%
+  summarize(avg_dist = mean(Shot.Distance), num_shots = n(), num_threes = sum(threepoint))
+year_grouped$pct_threes <- year_grouped$num_threes / year_grouped$num_shots
+
+p <- year_grouped %>%
+  ggplot(aes(x = year, y = avg_dist, color = pct_threes)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  scale_fill_gradient(low = "#1D5085", high = "#D04238") +
+  ggtitle("Average Shot Distance By Year") +
+  labs(subtitle = "Increasing distance over time with more three pointers",
+       x = "Year", y = "Average Shot Distance (in ft.)",color = "Percent of Shots 3PTers") +
+  theme(plot.title = element_text(face = "bold")) +
+  theme(text=element_text(family="serif"))+
+  theme(plot.title = element_text(size = 16))
+
+p + transition_reveal(year)
+p
+```
+
+```{r}
+player_grouped
+```
+
+
+## Who are the best shooters
+
+```{r}
+head(data)
+data$shot_value <- ifelse(data$Shot.Type == "3PT Field Goal", 3, 2) * data$Shot.Made.Flag
+
+player_grouped <- data%>%
+  group_by(Player.Name) %>%
+  summarize(avg_shot_value = mean(shot_value), num_shots = n()) %>%
+  arrange(-avg_shot_value)%>%
+  filter(num_shots >= 500)
+
+player_shot_grouped
+
+player_shot_grouped <- data%>%
+  group_by(Player.Name, Shot.Type) %>%
+  summarize(avg_shot_value = mean(shot_value), num_shots = n()) %>%
+  filter(num_shots >= 1000) %>%
+  arrange(-avg_shot_value)
+
+avg_2pt <- mean(player_shot_grouped$avg_shot_value[player_shot_grouped$Shot.Type=="2PT Field Goal"])
+avg_3pt <- mean(player_shot_grouped$avg_shot_value[player_shot_grouped$Shot.Type=="3PT Field Goal"])
+
+p <- player_shot_grouped %>%
+  ggplot(aes(x = num_shots, y = avg_shot_value, color = Shot.Type)) +
+  geom_point(aes(text = Player.Name, text1 = avg_shot_value,text2 = total_points)) +
+  theme_classic() +
+  geom_hline(yintercept = avg_2pt, size = 2, color = '#245AD1', linetype="dashed") +
+  geom_hline(yintercept = avg_3pt, size = 2, color = "#D15238", linetype="dashed") +
+  scale_color_manual(values=c("#245AD1", "#D15238")) +
+  annotate("text", x = 18000, y = avg_3pt +.03, label = "Avg. 3pt Value", color = "#D15238") +
+  annotate("text", x = 22000, y = avg_2pt -.03, label = "Avg. 2pt Value", color = "#245AD1") +
+  annotate("text", x = 7500, y = 1.35, label = "DeAndre Jordan", size = 3)+
+  annotate("text", x = 8800, y = 1.29, label = "Steph Curry", size = 3) +
+  annotate("text", x = 1500, y = 1.34, label = "Seth Curry", size = 3)+
+  annotate("text", x = 23000, y = 1.11, label = "LeBron James", size = 3) +
+  ggtitle("Average Shot Value by Shot Type and Number of Shots") +
+  labs(subtitle= "High value found in three pointers, with Steph Curry leading the way (minimum of 1000 shots)",
+       x = "Number of Shots", y = "Average Shot Value", color = "Shot Type") +
+  theme(plot.title = element_text(face = "bold")) +
+  theme(text=element_text(family="serif"))+
+  theme(plot.title = element_text(size = 16))
+
+player_shot_grouped[player_shot_grouped$Player.Name=="Ray Allen",]
+player_shot_grouped$total_points <- player_shot_grouped$num_shots * player_shot_grouped$avg_shot_value
+player_shot_grouped %>% 
+  arrange(-total_points)
+
+ggplotly(p, tooltip = c("text", "text1", "text2"))
+
+```
+## Make a shotchart
+
+
+```{r}
+# create just a basic shot dist.
+# to start, we'll use the goat #seth curry
+#install.packages("RCurl")
+library(RCurl)
+library(grid)
+library(jpeg)
+
+court_url <- 'https://thedatagame.files.wordpress.com/2016/03/nba_court.jpg'
+court <- rasterGrob(readJPEG(getURLContent(court_url)),
+           width=unit(1,"npc"), height=unit(1,"npc"))
+
+# create a function to call any player
+playerShotChart <- function(player_name, season, all_time){
+  season_1 = season +1
+  season = as.character(season)
+  season_1 = as.character(season_1)
+  player <- data %>%
+    filter(Player.Name == player_name) %>%
+    filter(Y.Location < 400)
+  if (all_time == FALSE){
+    player <- player %>%
+      filter((substr(as.character(Game.Date), 1, 4) == season & 
+                as.numeric(substr(as.character(Game.Date),5,6)) >= 10) |
+              substr(as.character(Game.Date), 1, 4) == season_1 & 
+                as.numeric(substr(as.character(Game.Date),5,6)) <= 4)}
+    
+  player$Shot.Made.Flag <- as.factor(player$Shot.Made.Flag)
+  levels(player$Shot.Made.Flag) <- c("Miss", "Make")
+  alpha = 1
+  if (all_time == TRUE){
+    alpha <- .1
+  }
+  else{
+    alpha <- .5
+  }
+  if (all_time == TRUE){
+    title = paste(player_name,"All Time Shot Chart")
+  }
+  else{
+    title = paste(player_name, " Shot Chart For ", season, "-", season_1," Season", sep = "")
+  }
+  player %>%
+    ggplot(aes(x = X.Location, y = Y.Location, shape = Shot.Type, color = Shot.Made.Flag)) +
+    annotation_custom(court, -250, 250, -50, 420) +
+    coord_fixed() +
+    geom_point(alpha = alpha) +
+    theme_classic() +
+    theme(line = element_blank(),
+               axis.title.x = element_blank(),
+               axis.title.y = element_blank(),
+               axis.text.x = element_blank(),
+               axis.text.y = element_blank()) +
+    ggtitle(title) +
+    labs(color = "Shot Result", shape = "Shot Type") +
+    theme(plot.title = element_text(face = "bold")) +
+    theme(text=element_text(family="serif"))+
+    theme(plot.title = element_text(size = 20)) +
+    scale_color_manual(values=c("#245AD1", "#D15238"))
+}
+
+```
+
+
+```{r}
+p <- playerShotChart("Dwight Howard", 2015, TRUE)
+p
+#p + transition_reveal(year)
+p
+```
+
+
+## Make it with Hexagons
+```{r}
+#install.packages("hexbin")
+library(hexbin)
+
+hex_shot <- function(player_name, season, all_time){
+
+  player <- data %>% 
+    filter(Player.Name == player_name) %>%
+    filter(Y.Location < 400) %>%
+  
+  player %>%
+      ggplot(aes(x = X.Location, y = Y.Location)) +
+      annotation_custom(court, -250, 250, -50, 420) +
+      coord_fixed() +
+      stat_binhex(bins = 15, colour = "gray", alpha = 0.7) +
+      scale_fill_gradientn(colours = c("yellow","orange","red")) +
+      guides(alpha = FALSE, size = FALSE) +
+      theme_classic() +
+      theme(line = element_blank(),
+                 axis.title.x = element_blank(),
+                 axis.title.y = element_blank(),
+                 axis.text.x = element_blank(),
+                 axis.text.y = element_blank()) +
+      labs(color = "Shot Result", shape = "Shot Type") +
+      theme(plot.title = element_text(face = "bold")) +
+      theme(text=element_text(family="serif"))+
+      theme(plot.title = element_text(size = 20)) 
+}
+
+hex_shot("Kobe Bryant", 2012, TRUE)
+
+
+```
+
+## Look At Most Above Average Players
+
+```{r}
+by_zone <- data %>%
+  group_by(Shot.Zone.Basic) %>%
+  summarize(avg_value = mean(shot_value), total_shots = n())
+
+by_player_zone <- data %>%
+  group_by(Player.Name, Shot.Zone.Basic) %>%
+  summarize(avg_value = mean(shot_value), total_shots = n())
+
+unique(by_player_zone$Shot.Zone.Basic)
+
+by_player_zone$above_average <- NA
+by_player_zone$above_average <- ifelse(by_player_zone$Shot.Zone.Basic == "Above the Break 3",
+                                       by_player_zone$avg_value - 
+                                         by_zone$avg_value[by_zone$Shot.Zone.Basic==
+                                                             "Above the Break 3"], 
+                                       by_player_zone$above_average)
+by_player_zone$above_average <- ifelse(by_player_zone$Shot.Zone.Basic == "Backcourt",
+                                       by_player_zone$avg_value - 
+                                         by_zone$avg_value[by_zone$Shot.Zone.Basic==
+                                                             "Backcourt"], 
+                                       by_player_zone$above_average)
+by_player_zone$above_average <- ifelse(by_player_zone$Shot.Zone.Basic == "In The Paint (Non-RA)",
+                                       by_player_zone$avg_value - 
+                                         by_zone$avg_value[by_zone$Shot.Zone.Basic==
+                                                             "In The Paint (Non-RA)"], 
+                                       by_player_zone$above_average)
+by_player_zone$above_average <- ifelse(by_player_zone$Shot.Zone.Basic == "Left Corner 3",
+                                       by_player_zone$avg_value - 
+                                         by_zone$avg_value[by_zone$Shot.Zone.Basic==
+                                                             "Left Corner 3"], 
+                                       by_player_zone$above_average)
+by_player_zone$above_average <- ifelse(by_player_zone$Shot.Zone.Basic == "Mid-Range",
+                                       by_player_zone$avg_value - 
+                                         by_zone$avg_value[by_zone$Shot.Zone.Basic==
+                                                             "Mid-Range"], 
+                                       by_player_zone$above_average)
+by_player_zone$above_average <- ifelse(by_player_zone$Shot.Zone.Basic == "Restricted Area",
+                                       by_player_zone$avg_value - 
+                                         by_zone$avg_value[by_zone$Shot.Zone.Basic==
+                                                             "Restricted Area"], 
+                                       by_player_zone$above_average)
+by_player_zone$above_average <- ifelse(by_player_zone$Shot.Zone.Basic == "Right Corner 3",
+                                       by_player_zone$avg_value - 
+                                         by_zone$avg_value[by_zone$Shot.Zone.Basic==
+                                                             "Right Corner 3"], 
+                                       by_player_zone$above_average)
+
+by_player_zone
+
+```
+
+
+
+```{r}
+top_shots <- by_player_zone %>%
+  arrange(-above_average) %>%
+  filter(total_shots >= 100) 
+
+top_shots$shot_name <- paste(top_shots$Player.Name,top_shots$Shot.Zone.Basic)
+top_shots$shot_name <- factor(top_shots$shot_name, levels = top_shots$shot_name[order(top_shots$above_average)])
+
+top_graph <- ggplot(data = head(top_shots, 15), aes(x = shot_name, y = above_average, fill = Shot.Zone.Basic)) +
+  geom_bar(stat = "Identity") +
+  coord_flip() +
+  theme_classic() +
+  ggtitle("Most Exceptional Shots in Basketball") +
+  theme(legend.position = "none") +
+  theme(plot.title = element_text(face = "bold")) +
+  theme(text=element_text(family="serif"))+
+  theme(plot.title = element_text(size = 20)) +
+  scale_fill_manual(values=c("#852E17", "#244BD1","#D15938", "#1D3585")) +
+  labs(subtitle = "Corner threes dominate in player specialties",
+       x = "Player and Shot Type", y ="Points per Attempt Above Average")
+
+top_graph
+
+```
+# create metric
+```{r}
+
+top_shots <- top_shots %>%
+  filter(Shot.Zone.Basic != "Backcourt")
+
+top_shots$nba_avg <- top_shots$avg_value - top_shots$above_average
+unique(top_shots$Shot.Zone.Basic)
+top_shots$shot_type <- ifelse(str_detect(top_shots$Shot.Zone.Basic, "3"),
+                              3, 2)
+top_shots$nba_fg <- (top_shots$nba_avg / top_shots$shot_type)
+top_shots
+top_shots$weight <- 1 - top_shots$nba_fg
+top_shots$score <- top_shots$weight * top_shots$above_average
+player_scores <- top_shots %>%
+  group_by(Player.Name) %>%
+  summarize(sum_score = sum(score), mean_score = mean(score)) %>%
+  arrange(-sum_score)
+player_scores
+```
+
+```{r}
+playerShotChart("Steve Nash", 2012,TRUE)
+```
+
+# Visaulize the types of shot by player
+
+```{r}
+by_player_zone_year <- data %>%
+  group_by(Player.Name, Shot.Zone.Basic, year) %>%
+  summarize(avg_value = mean(shot_value), total_shots = n())
+by_player_zone_year <- by_player_zone_year %>% 
+  filter(total_shots >= 50)
+yearly_shots <- data %>%
+  group_by(Player.Name, year) %>%
+  summarize(yearly_shots = n())
+yearly_shots
+by_player_zone_year <- by_player_zone_year %>%
+  inner_join(yearly_shots, by = c("Player.Name"="Player.Name",
+                                  "year" = "year"))
+by_player_zone_year$pct_total <- by_player_zone_year$total_shots / by_player_zone_year$yearly_shots
+
+player = 'Kawhi Leonard'
+by_player_zone_year %>%
+  filter(Player.Name == player) %>%
+  ggplot(aes(x = year, y = pct_total, color = Shot.Zone.Basic))+
+    geom_line() +
+    geom_point() +
+    
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
